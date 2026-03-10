@@ -1,7 +1,8 @@
 services:
   plausible_db:
+    container_name: plausible-db
     image: postgres:16-alpine
-    restart: always
+    restart: unless-stopped
     volumes:
       - db-data:/var/lib/postgresql/data
     environment:
@@ -9,10 +10,13 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       start_period: 1m
+    networks:
+      - plausible
 
   plausible_events_db:
+    container_name: plausible-events-db
     image: clickhouse/clickhouse-server:24.12-alpine
-    restart: always
+    restart: unless-stopped
     volumes:
       - event-data:/var/lib/clickhouse
       - event-logs:/var/log/clickhouse-server
@@ -37,10 +41,13 @@ services:
           "wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping || exit 1",
         ]
       start_period: 1m
+    networks:
+      - plausible
 
   plausible:
+    container_name: plausible
     image: ghcr.io/plausible/community-edition:v3.2.0
-    restart: always
+    restart: unless-stopped
     command: sh -c "/entrypoint.sh db createdb && /entrypoint.sh db migrate && /entrypoint.sh run"
     depends_on:
       plausible_db:
@@ -56,12 +63,12 @@ services:
     environment:
       - TMPDIR=/var/lib/plausible/tmp
       # required: https://github.com/plausible/community-edition/wiki/configuration#required
-      - BASE_URL=${BASE_URL}
+      - BASE_URL=https://plausible.benne.dk
       - SECRET_KEY_BASE=${SECRET_KEY_BASE}
       # optional: https://github.com/plausible/community-edition/wiki/configuration#optional
       # registration: https://github.com/plausible/community-edition/wiki/configuration#registration
       - TOTP_VAULT_KEY
-      - DISABLE_REGISTRATION
+      - DISABLE_REGISTRATION=true
       - ENABLE_EMAIL_VERIFICATION
       # web: https://github.com/plausible/community-edition/wiki/configuration#web
       - HTTP_PORT
@@ -92,9 +99,31 @@ services:
       - MAILGUN_BASE_URI
       - MANDRILL_API_KEY
       - SENDGRID_API_KEY
+    labels:
+      - "traefik.enable=true"
+      - "traefik-tailnet.enable=true"
+      - "traefik.http.routers.http-plausible.rule=Host(`plausible.benne.dk`)"
+      - "traefik.http.routers.http-plausible.entrypoints=tailnet"
+      - "traefik.http.routers.http-plausible.middlewares=plausible-https-redirect"
+      - "traefik.http.routers.https-plausible.rule=Host(`plausible.benne.dk`)"
+      - "traefik.http.routers.https-plausible.entrypoints=tailnetsecure"
+      - "traefik.http.routers.https-plausible.tls=true"
+      - "traefik.http.routers.https-plausible.tls.certresolver=powerdns_tailnet"
+      - "traefik.http.routers.https-plausible.tls.domains[0].main=plausible.benne.dk"
+      - "traefik.http.services.https-plausible.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.plausible-https-redirect.redirectscheme.scheme=https"
+    networks:
+      - plausible
+      - proxy-tailnet
 
 volumes:
   db-data:
   event-data:
   event-logs:
   plausible-data:
+
+networks:
+  plausible:
+    external: true
+  proxy-tailnet:
+    external: true

@@ -1,0 +1,40 @@
+name: Deploy to Docker
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: '0 2 * * 0'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Connect to Tailscale
+      uses: tailscale/github-action@v3
+      with:
+        oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+        oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+        tags: tag:ci
+
+    - name: Prepare Docker context
+      run: |
+        docker context create vaporbox --docker host=tcp://vaporbox:2375
+        docker context use vaporbox
+
+    - name: Ensure Docker networks exists
+      run: |
+        docker network create plausible || true
+        docker network create proxy-tailnet || true
+
+    - name: Deploy Plausible
+      env:
+        SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+      run: |
+        docker compose pull
+        docker compose -p plausible -f compose.yml up -d
